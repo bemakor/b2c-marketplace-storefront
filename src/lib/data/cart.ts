@@ -47,6 +47,28 @@ export async function retrieveCart(cartId?: string) {
     .catch(() => null)
 }
 
+/**
+ * Validates the current cart and cleans up stale cart references
+ * @returns The cart if valid, null otherwise
+ */
+export async function validateAndCleanCart() {
+  const cartId = await getCartId()
+  
+  if (!cartId) {
+    return null
+  }
+
+  const cart = await retrieveCart(cartId)
+  
+  if (!cart) {
+    // Cart ID exists but cart doesn't exist, clean up stale reference
+    await removeCartId()
+    return null
+  }
+  
+  return cart
+}
+
 export async function getOrSetCart(countryCode: string) {
   const region = await getRegion(countryCode)
 
@@ -54,7 +76,7 @@ export async function getOrSetCart(countryCode: string) {
     throw new Error(`Region not found for country code: ${countryCode}`)
   }
 
-  let cart = await retrieveCart()
+  let cart = await validateAndCleanCart()
 
   const headers = {
     ...(await getAuthHeaders()),
@@ -88,6 +110,14 @@ export async function updateCart(data: HttpTypes.StoreUpdateCart) {
 
   if (!cartId) {
     throw new Error("No existing cart found, please create one before updating")
+  }
+
+  // First check if the cart actually exists
+  const existingCart = await retrieveCart(cartId)
+  if (!existingCart) {
+    // Cart ID exists in cookies but cart doesn't exist, remove stale ID
+    await removeCartId()
+    throw new Error("Cart no longer exists, please create a new one")
   }
 
   const headers = {
@@ -432,18 +462,26 @@ export async function placeOrder(cartId?: string) {
  * @param countryCode
  */
 export async function updateRegion(countryCode: string, currentPath: string) {
-  const cartId = await getCartId()
   const region = await getRegion(countryCode)
 
   if (!region) {
     throw new Error(`Region not found for country code: ${countryCode}`)
   }
 
-  if (cartId) {
-    await updateCart({ region_id: region.id })
-    const cartCacheTag = await getCacheTag("carts")
-    revalidateTag(cartCacheTag)
+  // Validate current cart and clean up any stale references
+  const cart = await validateAndCleanCart()
+  
+  if (cart) {
+    // Only update if cart exists and region is different
+    if (cart.region_id !== region.id) {
+      await updateCart({ region_id: region.id })
+      const cartCacheTag = await getCacheTag("carts")
+      revalidateTag(cartCacheTag)
+    }
   }
+  
+  // If no cart exists, we'll let the user navigate to the new region
+  // and a cart will be created when needed (e.g., when adding items)
 
   const regionCacheTag = await getCacheTag("regions")
   revalidateTag(regionCacheTag)
