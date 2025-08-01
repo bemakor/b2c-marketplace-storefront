@@ -35,29 +35,33 @@ export const AlgoliaProductsListing = ({
   const facetFilters: string = getFacedFilters(searchParamas)
   const query: string = searchParamas.get("query") || ""
 
-  const filters = `${
-    seller_handle
-      ? `NOT seller:null AND seller.handle:${seller_handle} AND `
-      : "NOT seller:null AND "
-  }NOT seller.store_status:SUSPENDED AND supported_countries:${locale}${
-    category_id
-      ? ` AND categories.id:${category_id}${
-          collection_id !== undefined
-            ? ` AND collections.id:${collection_id}`
-            : ""
-        } ${facetFilters}`
-      : ` ${facetFilters}`
-  }`
+  // Build facet filters for array attributes
+  const facetFiltersList = [
+    `supported_countries:${locale}`,
+    category_id ? `categories.id:${category_id}` : '',
+    facetFilters
+  ].filter(Boolean)
+  
+  // Build basic filters for non-array attributes
+  const basicFilters = [
+    seller_handle ? `NOT seller:null AND seller.handle:${seller_handle}` : 'NOT seller:null',
+    'NOT seller.store_status:SUSPENDED',
+    collection_id ? `collections.id:${collection_id}` : ''
+  ].filter(Boolean).join(' AND ')
 
   return (
     <InstantSearchNext searchClient={client} indexName="products">
-      <Configure query={query} filters={filters} />
-      <ProductsListing locale={locale} />
+      <Configure 
+        query={query} 
+        filters={basicFilters} 
+        facetFilters={facetFiltersList}
+      />
+      <ProductsListing locale={locale} categoryId={category_id} />
     </InstantSearchNext>
   )
 }
 
-const ProductsListing = ({ locale }: { locale?: string }) => {
+const ProductsListing = ({ locale, categoryId }: { locale?: string, categoryId?: string }) => {
   const [prod, setProd] = useState<HttpTypes.StoreProduct[] | null>(null)
   const { items, results } = useHits()
 
@@ -72,14 +76,13 @@ const ProductsListing = ({ locale }: { locale?: string }) => {
         limit: 999,
       },
     }).then(({ response }) => {
-      setProd(
-        response.products.filter((prod) => {
-          const { cheapestPrice } = getProductPrice({ product: prod })
-          return Boolean(cheapestPrice) && prod
-        })
-      )
+      const filteredProds = response.products.filter((prod) => {
+        const { cheapestPrice } = getProductPrice({ product: prod })
+        return Boolean(cheapestPrice) && prod
+      })
+      setProd(filteredProds)
     })
-  }, [])
+  }, [locale])
 
   if (!results?.processingTimeMS) return <ProductListingSkeleton />
 
